@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Author;
+use Illuminate\Http\Request;
 
 class AuthorController extends Controller
 {
@@ -10,6 +11,10 @@ class AuthorController extends Controller
     {
         $authors = Author::all();
 
-        return view('authors.index', compact('authors'));
+        return response()->json([
+            'success' => true,
+            'message' => 'Data author berhasil diambil',
+            'data' => $authors
+        ]);
     }
 }
