@@ -26,4 +26,10 @@ class Book extends Model
     {
         return $this->belongsTo(Genre::class);
     }
+
+    // Relasi Book dengan Transaction
+    public function transactions()
+    {
+        return $this->hasMany(Transaction::class);
+    }
 }
