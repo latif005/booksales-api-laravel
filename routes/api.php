@@ -11,6 +11,9 @@ use App\Http\Controllers\TransactionController;
 Route::post('/login', [AuthController::class, 'login']);
 Route::post('/register', [AuthController::class, 'register']);
 
+// Logout
+Route::middleware('auth:sanctum')->post('/logout', [AuthController::class, 'logout']);
+
 // Route yang bisa diakses semua orang
 Route::get('/books', [BookController::class, 'index']);
 
