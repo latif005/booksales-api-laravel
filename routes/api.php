@@ -54,6 +54,7 @@ Route::middleware(['auth:sanctum', 'customer'])->group(function () {
 
     // Transaksi: Create, Show, dan Update
     Route::post('/transactions', [TransactionController::class, 'store']);
+    Route::get('/transactions/my-history', [TransactionController::class, 'myHistory']);
     Route::get('/transactions/{id}', [TransactionController::class, 'show']);
     Route::put('/transactions/{id}', [TransactionController::class, 'update']);
     Route::patch('/transactions/{id}', [TransactionController::class, 'update']);

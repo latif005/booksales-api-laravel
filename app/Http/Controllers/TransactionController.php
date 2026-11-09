@@ -5,6 +5,8 @@ namespace App\Http\Controllers;
 use App\Models\Transaction;
 use App\Models\Book;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 class TransactionController extends Controller
 {
@@ -19,21 +21,53 @@ class TransactionController extends Controller
         ], 200);
     }
 
+    // Menampilkan riwayat transaksi Customer
+    public function myHistory(Request $request)
+    {
+        $transactions = Transaction::with(['book'])
+            ->where('customer_id', $request->user()->id)
+            ->orderBy('created_at', 'desc')
+            ->get();
+
+        return response()->json([
+            'message' => 'Riwayat transaksi berhasil diambil',
+            'data' => $transactions
+        ], 200);
+    }
+
     // Menambahkan transaksi (Customer)
     public function store(Request $request)
     {
         $request->validate([
             'order_number' => 'required|unique:transactions,order_number',
             'book_id' => 'required|exists:books,id',
-            'total_amount' => 'required|numeric|min:0'
+            'quantity' => 'required|integer|min:1'
         ]);
 
-        $transaction = Transaction::create([
-            'order_number' => $request->order_number,
-            'customer_id' => $request->user()->id,
-            'book_id' => $request->book_id,
-            'total_amount' => $request->total_amount
-        ]);
+        $transaction = DB::transaction(function () use ($request) {
+
+            $book = Book::where('id', $request->book_id)
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            // Mengecek ketersediaan stok
+            if ($book->stock < $request->quantity) {
+                throw ValidationException::withMessages([
+                    'quantity' => ['Stok buku tidak mencukupi']
+                ]);
+            }
+
+            // Mengurangi stok buku
+            $book->decrement('stock', $request->quantity);
+
+            // Menyimpan transaksi
+            return Transaction::create([
+                'order_number' => $request->order_number,
+                'customer_id' => $request->user()->id,
+                'book_id' => $request->book_id,
+                'total_amount' => $book->price * $request->quantity
+            ]);
+        });
 
         return response()->json([
             'message' => 'Transaksi berhasil ditambahkan',
