@@ -75,6 +75,60 @@ class TransactionController extends Controller
         ], 201);
     }
 
+
+    // Checkout keranjang belanja (Customer)
+    public function checkout(Request $request)
+    {
+        $validated = $request->validate([
+            'order_number' => 'required|string|unique:transactions,order_number',
+            'items' => 'required|array|min:1',
+            'items.*.book_id' => 'required|integer|distinct|exists:books,id',
+            'items.*.quantity' => 'required|integer|min:1',
+            'payment_method' => 'required|in:COD',
+        ]);
+
+        $transactions = DB::transaction(function () use ($request, $validated) {
+            $results = [];
+
+            foreach ($validated['items'] as $item) {
+                $book = Book::where('id', $item['book_id'])
+                    ->lockForUpdate()
+                    ->firstOrFail();
+
+                // Mengecek ketersediaan stok
+                if ($book->stock < $item['quantity']) {
+                    throw ValidationException::withMessages([
+                        'items' => ['Stok buku ' . $book->title . ' tidak mencukupi']
+                    ]);
+                }
+
+                // Mengurangi stok buku
+                $book->decrement('stock', $item['quantity']);
+
+                // Menyimpan transaksi
+                $transaction = Transaction::create([
+                    'order_number' => $validated['order_number'],
+                    'customer_id' => $request->user()->id,
+                    'book_id' => $book->id,
+                    'quantity' => $item['quantity'],
+                    'total_amount' => $book->price * $item['quantity'],
+                    'payment_method' => 'COD',
+                    'payment_status' => 'pending',
+                ]);
+
+                $results[] = $transaction->load(['customer', 'book']);
+            }
+
+            return $results;
+        });
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Checkout berhasil. Pembayaran dilakukan saat pesanan diterima.',
+            'data' => $transactions
+        ], 201);
+    }
+
     // Menampilkan detail transaksi (Customer)
     public function show($id)
     {
@@ -85,30 +139,6 @@ class TransactionController extends Controller
         return response()->json([
             'message' => 'Detail transaksi berhasil diambil',
             'data' => $transaction
-        ], 200);
-    }
-
-    // Mengubah transaksi (Customer)
-    public function update(Request $request, $id)
-    {
-        $transaction = Transaction::where('customer_id', auth()->id())
-            ->findOrFail($id);
-
-        $request->validate([
-            'order_number' => 'required|unique:transactions,order_number,' . $id,
-            'book_id' => 'required|exists:books,id',
-            'total_amount' => 'required|numeric|min:0'
-        ]);
-
-        $transaction->update([
-            'order_number' => $request->order_number,
-            'book_id' => $request->book_id,
-            'total_amount' => $request->total_amount
-        ]);
-
-        return response()->json([
-            'message' => 'Transaksi berhasil diperbarui',
-            'data' => $transaction->load(['customer', 'book'])
         ], 200);
     }
 

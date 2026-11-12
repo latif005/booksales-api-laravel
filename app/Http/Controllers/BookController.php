@@ -9,9 +9,18 @@ use Illuminate\Support\Facades\Storage;
 class BookController extends Controller
 {
     // Menampilkan semua data buku
-    public function index()
+
+    // Menampilkan semua data buku dan pencarian buku
+    public function index(Request $request)
     {
-        $books = Book::all();
+        $query = Book::with(['genre', 'author']);
+
+        // Pencarian berdasarkan judul buku
+        if ($request->filled('search')) {
+            $query->where('title', 'like', '%' . $request->search . '%');
+        }
+
+        $books = $query->latest()->get();
 
         return response()->json([
             'success' => true,
@@ -19,6 +28,7 @@ class BookController extends Controller
             'data' => $books
         ]);
     }
+
 
     // Menambahkan buku
     public function store(Request $request)
