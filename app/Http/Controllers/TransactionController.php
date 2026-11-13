@@ -7,6 +7,8 @@ use App\Models\Book;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
+use Midtrans\Config;
+use Midtrans\Snap;
 
 class TransactionController extends Controller
 {
@@ -76,6 +78,7 @@ class TransactionController extends Controller
     }
 
 
+
     // Checkout keranjang belanja (Customer)
     public function checkout(Request $request)
     {
@@ -84,11 +87,13 @@ class TransactionController extends Controller
             'items' => 'required|array|min:1',
             'items.*.book_id' => 'required|integer|distinct|exists:books,id',
             'items.*.quantity' => 'required|integer|min:1',
-            'payment_method' => 'required|in:COD',
+            'payment_method' => 'required|in:COD,MIDTRANS',
         ]);
 
-        $transactions = DB::transaction(function () use ($request, $validated) {
+        $result = DB::transaction(function () use ($request, $validated) {
             $results = [];
+            $itemDetails = [];
+            $grossAmount = 0;
 
             foreach ($validated['items'] as $item) {
                 $book = Book::where('id', $item['book_id'])
@@ -102,6 +107,10 @@ class TransactionController extends Controller
                     ]);
                 }
 
+                // Menghitung subtotal
+                $subtotal = $book->price * $item['quantity'];
+                $grossAmount += $subtotal;
+
                 // Mengurangi stok buku
                 $book->decrement('stock', $item['quantity']);
 
@@ -111,23 +120,67 @@ class TransactionController extends Controller
                     'customer_id' => $request->user()->id,
                     'book_id' => $book->id,
                     'quantity' => $item['quantity'],
-                    'total_amount' => $book->price * $item['quantity'],
-                    'payment_method' => 'COD',
+                    'total_amount' => $subtotal,
+                    'payment_method' => $validated['payment_method'],
                     'payment_status' => 'pending',
                 ]);
 
                 $results[] = $transaction->load(['customer', 'book']);
+
+                // Menyiapkan detail item untuk Midtrans
+                $itemDetails[] = [
+                    'id' => (string) $book->id,
+                    'price' => (int) $book->price,
+                    'quantity' => (int) $item['quantity'],
+                    'name' => substr($book->title, 0, 50),
+                ];
             }
 
-            return $results;
+            // Jika pembayaran menggunakan Midtrans
+            if ($validated['payment_method'] === 'MIDTRANS') {
+                \Midtrans\Config::$serverKey = config('services.midtrans.server_key');
+                \Midtrans\Config::$isProduction = config('services.midtrans.is_production');
+                \Midtrans\Config::$isSanitized = config('services.midtrans.is_sanitized');
+                \Midtrans\Config::$is3ds = config('services.midtrans.is_3ds');
+
+                $user = $request->user();
+
+                $params = [
+                    'transaction_details' => [
+                        'order_id' => $validated['order_number'],
+                        'gross_amount' => (int) $grossAmount,
+                    ],
+                    'item_details' => $itemDetails,
+                    'customer_details' => [
+                        'first_name' => $user->name,
+                        'email' => $user->email,
+                    ],
+                ];
+
+                $snapToken = \Midtrans\Snap::createTransaction($params)->token;
+
+                return [
+                    'transactions' => $results,
+                    'snap_token' => $snapToken,
+                ];
+            }
+
+            return [
+                'transactions' => $results,
+                'snap_token' => null,
+            ];
         });
 
         return response()->json([
             'success' => true,
-            'message' => 'Checkout berhasil. Pembayaran dilakukan saat pesanan diterima.',
-            'data' => $transactions
+            'message' => $validated['payment_method'] === 'MIDTRANS'
+                ? 'Checkout berhasil. Silakan lanjutkan pembayaran.'
+                : 'Checkout berhasil. Pembayaran dilakukan saat pesanan diterima.',
+            'data' => $result['transactions'],
+            'snap_token' => $result['snap_token'],
         ], 201);
     }
+
 
     // Menampilkan detail transaksi (Customer)
     public function show($id)
@@ -151,5 +204,49 @@ class TransactionController extends Controller
         return response()->json([
             'message' => 'Transaksi berhasil dihapus'
         ], 200);
+    }
+
+    public function midtransWebhook(Request $request)
+    {
+        \Midtrans\Config::$serverKey = config('services.midtrans.server_key');
+        \Midtrans\Config::$isProduction = config('services.midtrans.is_production');
+
+        try {
+            $notification = new \Midtrans\Notification();
+
+            $transactionStatus = $notification->transaction_status;
+            $orderId = $notification->order_id;
+
+            $transactions = Transaction::where('order_number', $orderId)->get();
+
+            if ($transactions->isEmpty()) {
+                return response()->json(['message' => 'Transaksi tidak ditemukan'], 404);
+            }
+
+            $status = 'pending';
+
+            if ($transactionStatus == 'capture' || $transactionStatus == 'settlement') {
+                $status = 'success';
+            } elseif ($transactionStatus == 'cancel' || $transactionStatus == 'deny' || $transactionStatus == 'expire') {
+                $status = 'failed';
+
+                foreach ($transactions as $tx) {
+                    $book = Book::find($tx->book_id);
+                    if ($book) {
+                        $book->increment('stock', $tx->quantity);
+                    }
+                }
+            } elseif ($transactionStatus == 'pending') {
+                $status = 'pending';
+            }
+
+            Transaction::where('order_number', $orderId)->update([
+                'payment_status' => $status
+            ]);
+
+            return response()->json(['message' => 'Webhook berhasil diproses']);
+        } catch (\Exception $e) {
+            return response()->json(['message' => $e->getMessage()], 500);
+        }
     }
 }

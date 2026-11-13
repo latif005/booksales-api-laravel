@@ -9,6 +9,7 @@ use App\Http\Controllers\AuthorController;
 use App\Http\Controllers\UserController;
 use App\Http\Controllers\TransactionController;
 use App\Http\Controllers\ContactMessageController;
+use App\Http\Controllers\MidtransController;
 
 /*
 |--------------------------------------------------------------------------
@@ -35,6 +36,10 @@ Route::get('/authors/{id}', [AuthorController::class, 'show']);
 
 // Contact Admin
 Route::post('/contact', [ContactMessageController::class, 'store']);
+
+// Midtrans Webhook Notification
+Route::post('/midtrans/notification', [MidtransController::class, 'notification']);
+
 
 
 /*
