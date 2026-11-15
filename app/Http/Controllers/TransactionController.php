@@ -181,19 +181,38 @@ class TransactionController extends Controller
         ], 201);
     }
 
-
     // Menampilkan detail transaksi (Customer)
     public function show($id)
     {
-        $transaction = Transaction::with(['customer', 'book'])
-            ->where('customer_id', auth()->id())
+        // Mengambil transaksi berdasarkan ID dan memastikan milik customer
+        $transaction = Transaction::where('customer_id', auth()->id())
             ->findOrFail($id);
+
+        // Mengambil semua transaksi dengan nomor pesanan yang sama
+        $transactions = Transaction::with(['customer', 'book'])
+            ->where('customer_id', auth()->id())
+            ->where('order_number', $transaction->order_number)
+            ->orderBy('id', 'asc')
+            ->get();
+
+        // Menghitung total seluruh pembayaran
+        $totalAmount = $transactions->sum('total_amount');
 
         return response()->json([
             'message' => 'Detail transaksi berhasil diambil',
-            'data' => $transaction
+            'data' => [
+                'order_number' => $transaction->order_number,
+                'customer' => $transaction->customer,
+                'created_at' => $transaction->created_at,
+                'payment_method' => $transaction->payment_method,
+                'payment_status' => $transaction->payment_status,
+                'total_amount' => $totalAmount,
+                'total_quantity' => $transactions->sum('quantity'),
+                'items' => $transactions,
+            ]
         ], 200);
     }
+
 
     // Menghapus transaksi (Admin)
     public function destroy($id)
